@@ -61,6 +61,7 @@ test("scan: exits 0 and reports candidates", async () => {
   const out = lines.join("\n");
   assert.ok(out.includes("Resume Download"));
   assert.ok(out.includes("A 层缺口"));
+  assert.ok(out.includes("已有译文"));   // 覆盖读数：缺口里已有译文的条数
 });
 
 test("apply: with an empty dictionary is a no-op that still succeeds", async () => {

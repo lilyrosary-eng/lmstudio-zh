@@ -120,6 +120,8 @@ export async function main(args, io) {
       const missing = missingFromA(code, located);
       const cands = candidates(code, located);
       const todo = decideUntranslated(code, located, lex, lexLocal).filter((d) => !d.zh);
+      // 缺口里已被词典（人工/本地）覆盖的条数——「全部有译文」的直接读数
+      const aCovered = missing.filter((m) => lex.entries.has(m.en) || lexLocal.entries.has(m.en)).length;
       // 设计文档 §10：scan 支持 --json 导出（候选有近八千条，文本列表只是给人看的）
       if (io.argv.includes("--json")) {
         io.log(JSON.stringify({
@@ -128,7 +130,7 @@ export async function main(args, io) {
         }, null, 2));
         return 0;
       }
-      io.log(`A 层缺口（官方词条表缺 zh）: ${missing.length}`);
+      io.log(`A 层缺口（官方词条表缺 zh）: ${missing.length}（已有译文 ${aCovered}，未覆盖 ${missing.length - aCovered}）`);
       for (const m of missing) io.log(`  [A] ${m.namespace} :: ${m.en}`);
       io.log(`B 层候选（硬编码英文）: ${cands.length}`);
       io.log(`待翻译（词典未覆盖）: ${todo.length}`);
