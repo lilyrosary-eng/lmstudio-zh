@@ -555,10 +555,18 @@ import { join } from "node:path";
 // 优先级数字越大越优先。curated 是人工词典，永不被覆盖。
 const PRIORITY = { model: 1, user: 2, curated: 3 };
 
-function readJson(path, fallback) {
-  if (!existsSync(path)) return fallback;
+// 人工词典（committed）：损坏必须报错，不能静默降级成「没有可翻译的东西」
+function readCurated(path) {
+  if (!existsSync(path)) return null;                 // 缺失不是错误
   try { return JSON.parse(readFileSync(path, "utf8")); }
-  catch (e) { throw new Error(`无法解析 ${path}: ${e.message}`); }
+  catch (e) { throw new Error(`无法解析人工词典 ${path}: ${e.message}`); }
+}
+
+// 运行时产物（可重建）：损坏可降级为空，但必须可被察觉
+function readLocal(path, onWarn) {
+  if (!existsSync(path)) return null;
+  try { return JSON.parse(readFileSync(path, "utf8")); }
+  catch (e) { onWarn?.(`本地词典已损坏，已忽略：${path} (${e.message})`); return null; }
 }
 
 export function emptyLexicon() {
@@ -577,16 +585,16 @@ function ingest(lex, data) {
   }
 }
 
-export function loadLocal(stateDir) {
+export function loadLocal(stateDir, onWarn) {
   const lex = emptyLexicon();
-  ingest(lex, readJson(join(stateDir, "lexicon.local.json"), null));
+  ingest(lex, readLocal(join(stateDir, "lexicon.local.json"), onWarn));
   return lex;
 }
 
-export function load(stateDir, toolDir) {
+export function load(stateDir, toolDir, onWarn) {
   const lex = emptyLexicon();
-  ingest(lex, readJson(join(toolDir, "lexicon", "zh-CN.json"), null));
-  ingest(lex, readJson(join(stateDir, "lexicon.local.json"), null));
+  ingest(lex, readCurated(join(toolDir, "lexicon", "zh-CN.json")));
+  ingest(lex, readLocal(join(stateDir, "lexicon.local.json"), onWarn));
   return lex;
 }
 
@@ -2259,8 +2267,8 @@ export async function main(args, io) {
   const stateDir = io.stateDir ?? defaultStateDir();
   ensureState(stateDir);
   const toolDir = io.toolDir ?? TOOL_DIR;
-  const lex = load(stateDir, toolDir);
-  const lexLocal = loadLocal(stateDir);
+  const lex = load(stateDir, toolDir, io.err);
+  const lexLocal = loadLocal(stateDir, io.err);
 
   switch (cmd) {
     case "doctor": {
