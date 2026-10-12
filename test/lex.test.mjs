@@ -127,3 +127,75 @@ test("encode: backtick output never contains an unescaped ${", () => {
     assert.equal(decode(encode(v, "`")), v);
   }
 });
+
+// --- 模板串：替换表达式内部的嵌套字符串必须整块消费 ---
+
+test("scan: a ${ inside a nested string does not swallow the rest of the file", () => {
+  const code = 'var t=`${"${"}`; var s="after";';
+  const lits = scan(code);
+  // decode 只做转义还原、不求值替换表达式，因此 value 是模板串的字面内文。
+  assert.deepEqual(lits.map((l) => l.value), ['${"${"}', "after"]);
+  assert.equal(lits[0].raw, '`${"${"}`');
+  assert.equal(lits[0].hasSubstitution, true);
+  for (const l of lits) assert.equal(code.slice(l.start, l.end), l.raw);
+});
+
+test("scan: an unterminated template is surfaced, not silently closed", () => {
+  const lits = scan('var t=`never closed; var s="after";');
+  assert.equal(lits.length, 1);
+  // 未闭合的 raw 不以反引号结尾，tools/check-real-bundle.mjs 会把它计入 unterminated。
+  assert.notEqual(lits[0].raw.at(-1), "`");
+});
+
+test("scan: hasSubstitution is false for an escaped \\${", () => {
+  const lits = scan('var t=`a\\${b}c`;');
+  assert.equal(lits[0].hasSubstitution, false);
+  assert.equal(lits[0].value, "a${b}c");
+});
+
+// 记录在案的取舍：替换表达式内部的字符串不单独上报为字面量。
+// 它们仍属于外层模板串的 raw，因此仍可被整体替换，但 Task 3 的候选提取看不到它们。
+test("scan: strings inside a substitution are not reported as separate literals", () => {
+  const lits = scan('var s=`x${ cond ? "Yes" : "No" }y`;');
+  assert.equal(lits.length, 1);
+  assert.equal(lits[0].quote, "`");
+  assert.equal(lits[0].hasSubstitution, true);
+});
+
+// --- decode：行接续含 CR 与 CRLF ---
+
+test("decode: CR and CRLF are line continuations", () => {
+  assert.equal(decode('"a\\\nb"'), "ab");
+  assert.equal(decode('"a\\\rb"'), "ab");
+  assert.equal(decode('"a\\\r\nb"'), "ab");
+});
+
+// --- '/' 是正则还是除号：关键字后面可以跟正则 ---
+
+test("scan: a regex after return is not harvested as a literal", () => {
+  assert.deepEqual(scan('function f(){return /"ghost"/.test(s);}'), []);
+});
+
+test("scan: a regex after case is not harvested as a literal", () => {
+  assert.deepEqual(scan('switch(x){case /"ghost"/.test(s):break;}'), []);
+});
+
+test("scan: division after an identifier still beats the keyword rule", () => {
+  const lits = scan('var x=a/b/c; var s="after";');
+  assert.deepEqual(lits.map((l) => l.value), ["after"]);
+});
+
+// --- 其余覆盖补齐 ---
+
+test("scan: block comment contents are ignored", () => {
+  const lits = scan('/* "ghost" */ var s="real";');
+  assert.equal(lits.length, 1);
+  assert.equal(lits[0].value, "real");
+});
+
+test("scan: every span slices back to its own raw across a multi-literal sample", () => {
+  const code = `var a="one";var re=/"skip"/g;var b='two';var c=\`tpl \${x}\`;var d={"k":"v"};`;
+  const lits = scan(code);
+  assert.deepEqual(lits.map((l) => l.value), ["one", "two", "tpl ${x}", "k", "v"]);
+  for (const l of lits) assert.equal(code.slice(l.start, l.end), l.raw);
+});
