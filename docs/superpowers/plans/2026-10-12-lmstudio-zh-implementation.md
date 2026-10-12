@@ -429,11 +429,14 @@ console.log("OK");
 
 Run: `node tools/check-real-bundle.mjs`
 Expected: `literals 394006`、`isKey-true 8006`、`decode-mismatch 0`、`span-mismatch 0`、
-`unterminated 0`、`overlong(>500)` 为个位数、`OK`
+`unterminated 0`、`overlong(>500)` 为 7696（其中 phantom 107 条 / 1.49MB）、`OK`
 
 > `overlong(>500)` 统计的是「扫描器把一整段真实代码误当成了一个字面量」的跨度。
-> 当前实测约 54 条、共约 1.3MB。Task 3 的 `isCandidate` 以 `length > 500` 拒绝它们，
-> 因此不会被打补丁；这里是让该损失保持可见，而不是静默。
+> 当前实测 7,696 条、共约 10.4MB（其中约 84% 是合法的 i18n 词条表 / CSS 数据）。
+> 其中形似代码的幻影跨度（实测 107 条 / 1.49MB）由 Task 3 的 `isPhantomSpan`
+> 按 **raw 宽度**拒绝——注意不是 `isCandidate` 的 `length > 500`（那只比对解码后
+> 的 value，实测存在 raw 长 36 字符、value 仅 30 字符的幻影，只过滤 value 会漏掉）。
+> 这里是让该损失保持可见，而不是静默。
 
 若 `span-mismatch` 或 `unterminated` 非 0，**停止**并报告，不要继续 Task 2——
 说明扫描器有缺陷，后面所有安全性保证都是空话。
@@ -1351,7 +1354,7 @@ export function splice(code, edits) {
 }
 
 // 闸门 3：占位符集合必须完全一致
-const placeholders = (s) => (String(s).match(/\{\{[^}]*\}\}/g) ?? []).sort().join(" ");
+const placeholders = (s) => (String(s).match(/\{\{[^}]*\}\}/g) ?? []).sort().join(" ");
 
 export function validate(edit) {
   const { en, zh } = edit;
