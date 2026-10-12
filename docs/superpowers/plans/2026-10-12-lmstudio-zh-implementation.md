@@ -749,6 +749,7 @@ git commit -m "feat(lexicon): bilingual dictionary with source-priority merge"
 - Create: `test/extract.test.mjs`
 - Create: `fixtures/mini-bundle.mjs`
 - Create: `lexicon/short-words.json`
+- Modify: `tools/check-real-bundle.mjs`
 
 **Interfaces:**
 - Consumes: `scan` from `lex.mjs`
@@ -760,6 +761,7 @@ git commit -m "feat(lexicon): bilingual dictionary with source-priority merge"
   - `candidates(code, located): Candidate[]` — B 层候选
   - `missingFromA(code, located): MissingEntry[]` — A 层缺口
   - `isCandidate(text, isKey): boolean`
+  - `isPhantomSpan(raw): boolean` — 幻影跨度守卫（见 Step 8）
 
   其中 `Span = { start, end }`，`Candidate = { text, span, quote, hasSubstitution, source: "B" }`，`MissingEntry = { namespace, key, en }`
 
@@ -1090,7 +1092,7 @@ const DENY = [
 ];
 const hasCJK = (s) => /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(s);
 
-export function isCandidate(text, isKey) {
+export function isCandidate(text, isKey, raw) {
   if (isKey) return false;                       // 只翻值
   if (!text || text.length < 2 || text.length > 500) return false;
   if (hasCJK(text)) return false;                // 已翻译
@@ -1101,6 +1103,19 @@ export function isCandidate(text, isKey) {
   return /[A-Z]/.test(text);                     // 多词需含大写字母
 }
 
+// 幻影跨度守卫。扫描器在极少数构造上会把一整段真实代码并进一个字面量。
+// 实测：overlong(>500) 共 7,696 条 / 10.4MB，但其中 84% 是 LM Studio 自己的
+// i18n 词条表与 tailwind CSS 等合法内嵌数据——所以单看长度无法区分数据与代码。
+// 再叠加「形似代码」特征后收敛到 101 条 / 1.5MB，逐条检查全部是被吞掉的真实
+// 压缩 JS（webpack 模块体、class、this.、Object.defineProperty…）。
+//
+// 关键：判据用的是 raw（跨度的原始宽度），不是解码后的 value——实测存在
+// raw 长 36 字符、value 仅 30 字符的幻影，只过滤 value 会漏掉。
+export function isPhantomSpan(raw) {
+  if (raw.length <= 500) return false;
+  return /function|=>|===|var\s|class\s|this\./.test(raw);
+}
+
 // B 层候选：bundle 内、不属于任何语言模块区间的自然语言字面量
 export function candidates(code, located) {
   const excluded = allLanguageModules(code, located);
@@ -1108,6 +1123,7 @@ export function candidates(code, located) {
   const out = [];
   for (const lit of scan(code)) {
     if (inExcluded(lit.start)) continue;
+    if (isPhantomSpan(lit.raw)) continue;          // 幻影跨度：绝不翻译
     if (!isCandidate(lit.value, lit.isKey)) continue;
     out.push({ text: lit.value, span: { start: lit.start, end: lit.end },
                quote: lit.quote, hasSubstitution: lit.hasSubstitution, source: "B" });
@@ -1139,6 +1155,27 @@ test("isCandidate: accepts natural UI text and whitelisted short words", async (
 test("isCandidate: rejects already-translated text", async () => {
   const { isCandidate } = await import("../src/extract.mjs");
   assert.equal(isCandidate("已下载", false), false);
+});
+
+test("isPhantomSpan: flags swallowed code, not embedded data", async () => {
+  const { isPhantomSpan } = await import("../src/extract.mjs");
+  // 被吞掉的真实压缩 JS：长度大且形似代码
+  assert.equal(isPhantomSpan("x".repeat(600) + "function a(){}"), true);
+  assert.equal(isPhantomSpan("x".repeat(600) + "var q=1"), true);
+  assert.equal(isPhantomSpan("x".repeat(600) + "this.a=1"), true);
+  // 合法内嵌数据：长度大但无形似代码特征
+  assert.equal(isPhantomSpan('{"chat":"Chat","discover":"Discover"}'), false);
+  assert.equal(isPhantomSpan(".a{color:red;padding:0}"), false);
+  // 正常短字面量一律不是幻影
+  assert.equal(isPhantomSpan('"Resume Download"'), false);
+  assert.equal(isPhantomSpan("x".repeat(600)), false);   // 长但无形似代码特征
+});
+
+test("candidates: phantom spans are never candidates", () => {
+  const evil = 'var a="' + "x".repeat(600) + "function q(){}=1;var b=1;" + '";var c="Resume Download";';
+  const m = locateLanguageModule(evil);
+  const c = candidates(evil, m);
+  assert.equal(c.some((x) => x.text.includes("function q")), false);
 });
 
 test("candidates: language module literals are excluded", () => {
@@ -1184,16 +1221,31 @@ git commit -m "feat(extract): structural i18n catalog location and candidate fil
 **Interfaces:**
 - Consumes: `encode` from `lex.mjs`；`locateLanguageModule`, `readCatalog`, `allLanguageModules`, `missingFromA` from `extract.mjs`
 - Produces:
-  - `planA(code, decisions): Edit[]` — A 层编辑计划
+  - `planA(code, located, decisions): Edit[]` — A 层编辑计划
   - `planB(code, located, decisions): Edit[]` — B 层编辑计划
+  - `planForDecisions(code, decisions): Edit[]`
   - `splice(code, edits): string`
   - `validate(edit): { ok, reason? }` — 闸门 3 的逐条校验
+  - `reverify(code, edit): boolean` — **闸门 3.5：独立复验跨度**（见下）
   - `verify(original, patched, manifest): GateResult` — 闸门 4 的四项
   - `apply(target, original, patched, stateDir): ApplyResult`
   - `restore(target, stateDir): boolean`
-  - `provenance(target, stateDir): { state, manifest|null }`
+  - `provenance(code, stateDir): { state, manifest }`
 
   其中 `Edit = { start, end, original, replacement, en, zh, origin }`
+
+### 闸门 3.5 — 跨度独立复验
+
+`extract.candidates` 的过滤发生在**选计划**时，而 `apply` 写文件是另一个时刻、另一段代码路径。
+扫描器的幻影跨度（把一整段真实压缩 JS 并进一个字面量）在此处被二次独立拦截：
+
+对每条待写入的 edit，重新用 `lex` 在当前缓冲区上按该 edit 的 `start`/`end` 切片，
+断言切片结果 **逐字节等于** edit 记录的 `original`，且 `original` 的首尾引号配对、
+且 `decode(original)` 等于 edit 记录的 `en`。任一不符即拒绝该 edit（不是拒绝整个补丁），
+并把它记入 `pending.json`。
+
+这与闸门 4 的「由原文件 + manifest 重算」是不同层面的检查：闸门 4 证明「补丁没做计划外的事」，
+闸门 3.5 证明「计划本身建立在真实跨度上」。
 
 ---
 
