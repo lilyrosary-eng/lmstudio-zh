@@ -199,6 +199,7 @@ export const enCatalog = (code, located) => readCatalog(code, located, "en");
 // 路径必须用段数组传递，不能用 "/" 拼接再 split：真实词条表里存在键名本身
 // 含 "/" 的扁平条目（如 "addMessageButtonText/toolTip"），拼接口径会把它们
 // 误判成嵌套路径并按层级深查，实测由此产生 572 条假缺口（660 vs 88）。
+// path 段数组交给 planA 做嵌套补写；key 保留拼接形式供展示与既有消费方。
 export function missingFromA(code, located) {
   const en = enCatalog(code, located);
   const zh = zhCatalog(code, located);
@@ -208,7 +209,7 @@ export function missingFromA(code, located) {
     const zdata = zh[namespace]?.data ?? {};
     for (const [path, value] of flatten(data)) {
       if (lookupPath(zdata, path) === undefined) {
-        out.push({ namespace, key: path.join("/"), en: value });
+        out.push({ namespace, key: path.join("/"), path, en: value });
       }
     }
   }
@@ -277,15 +278,17 @@ const oddCount = (s, ch) => {
   return n % 2 === 1;
 };
 
-export function isCandidate(text, isKey, raw) {
+export function isCandidate(text, isKey, raw, maxLen = 25) {
   if (isKey) return false;                       // 只翻值
   if (!text || text.length < 2 || text.length > 500) return false;
-  // UI 层上限 25 字符：实测 B 层候选唯一值按长度分布，≤25 是按钮/选项/设置标签
+  // UI 层上限默认 25 字符：实测 B 层候选唯一值按长度分布，≤25 是按钮/选项/设置标签
   // （设计文档 §2.2 点名的样例全部 ≤21 字符），26 以上几乎全是库内部消息
   // （asn1/router/React 校验）与文档式长句——用户裁定可见控件要翻、文档不翻。
+  // maxLen 可放宽：配置 schema 模块里的悬停提示（见 candidates()的提示层）
+  // 普遍 30-100 字符，是用户明确要翻的「悬停窗」。
   // >25 字符的 curated 条目全部走 A 层路径（实测 B 层候选零依赖），
   // 加上限不破坏任何现有译文。
-  if (text.length > 25) return false;
+  if (text.length > maxLen) return false;
   if (hasCJK(text)) return false;                // 已翻译
   if (text !== text.trim()) return false;        // 边缘空白：内部字符串特征，UI 标签不会有
   if (isSvgPath(text)) return false;             // SVG 路径数据：翻不得，写回会毁掉图标
@@ -312,6 +315,35 @@ export function isCandidate(text, isKey, raw) {
 export function isPhantomSpan(raw) {
   if (raw.length <= 500) return false;
   return /function|=>|===|var\s|class\s|this\./.test(raw);
+}
+
+// localStorage 持久化值防护：useLocalStorage("key","默认值") 与
+// localStorage.setItem("key","值") 的字面量值是跨会话持久化的状态。老用户的
+// 存储里躺着英文原值，补丁后代码拿中文译文跟它比较，永远不相等——实测
+// "Loaded models" 被译后，开发者页的已加载模型面板直接不渲染。这类值连同其
+// 全部同串出现（默认值、比较Literal、setter 参数）一律不翻。
+// 注意标识符是 useLocalStorage（大写 L）——写成小写 localStorage 匹配不到。
+function persistedStateValues(code) {
+  const vals = new Set();
+  for (const m of code.matchAll(/useLocalStorage\)\s*\(\s*(["'`])((?:\\.|(?!\1).)*)\1\s*,\s*(["'`])((?:\\.|(?!\3).)*)\3/g)) {
+    vals.add(m[4]);
+  }
+  for (const m of code.matchAll(/localStorage\)\s*\.\s*setItem\s*\(\s*(["'`])((?:\\.|(?!\1).)*)\1\s*,\s*(["'`])((?:\\.|(?!\3).)*)\3/g)) {
+    vals.add(m[4]);
+  }
+  return vals;
+}
+
+// 提示位属性名：这些属性的字符串值就是悬停窗/提示文案
+const TIP_PROP = /(?:hint|tooltip|subTitle|subtitle|description|title|ariaLabel|placeholder|displayName|label)\s*:\s*$/;
+
+// 配置 schema 模块集合：含 displayName: 的 webpack 模块（实测 70 个）——
+// LM Studio 自己的配置 schema 都在这里；Monaco 等库模块里的提示位长串
+// （实测 240 个唯一值）是编辑器 API 文档，不翻。
+function schemaModuleSet(code, headPositions, moduleOf) {
+  const set = new Set();
+  for (const m of code.matchAll(/displayName\s*:/g)) set.add(moduleOf(m.index, headPositions));
+  return set;
 }
 
 // bundle 里被当作对象键使用的标识符集合。两个来源：
@@ -354,11 +386,27 @@ export function candidates(code, located) {
   };
   const { keys, arrayWords, caseWords } = codeUsageSets(code, lits, inExcluded);
   const isLookupKey = (w) => keys.has(w) && (arrayWords.has(w) || caseWords.has(w));
+  const persisted = persistedStateValues(code);
+  // 模块定位（用于 schema 提示层）：heads 是 Map<modId, index>，取排序后的位置数组
+  const headPositions = [...heads.values()].sort((a, b) => a - b);
+  const moduleOf = (pos) => {
+    let lo = 0, hi = headPositions.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (headPositions[mid] <= pos) lo = mid + 1; else hi = mid; }
+    return lo - 1;
+  };
+  const schemaModules = schemaModuleSet(code, headPositions, moduleOf);
   const out = [];
   for (const lit of lits) {
     if (inExcluded(lit.start)) continue;
     if (isPhantomSpan(lit.raw)) continue;          // 幻影跨度：绝不翻译
-    if (!isCandidate(lit.value, lit.isKey)) continue;
+    if (persisted.has(lit.value)) continue;        // 持久化状态值：译了会让老用户存储失配
+    // 提示层：配置 schema 模块内、提示位属性值，允许到 200 字符（悬停窗文案）
+    let maxLen = 25;
+    if (lit.value.length > 25 && schemaModules.has(moduleOf(lit.start))
+        && TIP_PROP.test(code.slice(Math.max(0, lit.start - 60), lit.start))) {
+      maxLen = 200;
+    }
+    if (!isCandidate(lit.value, lit.isKey, lit.raw, maxLen)) continue;
     // 注册表键防护：只影响单词候选（键集合里只有标识符形状的串）
     if (!lit.value.includes(" ") && isLookupKey(lit.value)) continue;
     out.push({ text: lit.value, span: { start: lit.start, end: lit.end },

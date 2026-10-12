@@ -119,6 +119,30 @@ test("candidates: lookup-table keys are never candidates", async () => {
   assert.ok(texts.includes("Top"), "仅作值/枚举键的 Top 不应被误杀");
 });
 
+test("candidates: persisted localStorage values are never candidates", async () => {
+  // 实测事故：useLocalStorage("developer:modelsSubComponent:selectedTab","Loaded models")
+  // 的默认值是跨会话持久化的状态。老用户存储里躺着英文原值，补丁后代码拿中文
+  // 译文跟它比较，永远不相等——开发者页的已加载模型面板直接不渲染。
+  const { candidates } = await import("../src/extract.mjs");
+  const code = 'const[v,m]=(0,i.useLocalStorage)("developer:modelsSubComponent:selectedTab","Loaded models");var x="Loaded models";var y="Loaded Models";';
+  const texts = candidates(code, null).map((c) => c.text);
+  assert.ok(!texts.includes("Loaded models"), "持久化值不应成为候选");
+  assert.ok(texts.includes("Loaded Models"), "仅大小写不同的展示标签不受影响");
+});
+
+test("candidates: schema-module tooltips get the relaxed length tier", async () => {
+  // 悬停窗文案（schema 模块里的 hint: 值）普遍 30-100 字符，用户明确要翻；
+  // 非 schema 模块（Monaco 等库）里的长串仍受 25 字符上限约束。
+  const { candidates } = await import("../src/extract.mjs");
+  const code = 'var m={99999:(t,e)=>{"use strict";const s={displayName:"Context Checkpoints",hint:"Maximum number of context checkpoints to keep per llama-server slot. 0 disables checkpoints."};}};'
+             + 'var n={88888:(t,e)=>{"use strict";const s={hint:"Scroll editor in the given direction and reveal the given line"};}};';
+  const texts = candidates(code, null).map((c) => c.text);
+  assert.ok(texts.includes("Maximum number of context checkpoints to keep per llama-server slot. 0 disables checkpoints."),
+    "schema 模块内的悬停提示应成为候选");
+  assert.ok(!texts.includes("Scroll editor in the given direction and reveal the given line"),
+    "非 schema 模块的长串不应成为候选");
+});
+
 test("isCandidate: rejects documentation-length strings (UI-tier cap)", async () => {
   // 用户裁定：按钮/选项/设置等可见控件要翻，文档长句不翻。
   // 25 字符是实测分界线：以上几乎全是库内部消息与文档式描述。

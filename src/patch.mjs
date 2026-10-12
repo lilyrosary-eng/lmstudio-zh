@@ -89,7 +89,6 @@ export function verify(original, patched, manifest) {
 // A 层：在 zh_CN 的 JSON.parse 字面量内增补缺失 key
 export function planA(code, located, decisions) {
   const zh = readCatalog(code, located, "zh_CN");
-  const en = readCatalog(code, located, "en");
   const byEn = new Map(decisions.map((d) => [d.en, d]));
   const edits = [];
   if (!zh) return edits;
@@ -99,26 +98,19 @@ export function planA(code, located, decisions) {
   const miss = missingFromA(code, located);
 
   for (const [namespace, { data, span }] of Object.entries(zh)) {
-    const added = {};
+    let addedCount = 0;
     for (const m of miss) {
       if (m.namespace !== namespace) continue;
       const zhText = byEn.get(m.en);
       if (!zhText) continue;
       const v = validate({ en: m.en, zh: zhText.zh });
       if (!v.ok) continue;
-      added[m.key] = zhText.zh;
-    }
-    // 区分扁平键与嵌套路径：真实词条表里「键名本身含 /」的扁平条目（如
-    // "notes/hint"）可以安全地顶层补入；嵌套路径（如 "uiControls/title"）
-    // 不在 v1 自动补齐范围，留给人工。判据取英文词条表的顶层键集合。
-    // brief 原稿的 k.includes("/") 会把 88 条缺口中 59 条可安全补入的
-    // 扁平键一并跳过（Task 3 报告 §6.1）。
-    const flatKeys = new Set(Object.keys(en?.[namespace]?.data ?? {}));
-    let addedCount = 0;
-    for (const [k, v] of Object.entries(added)) {
-      if (!flatKeys.has(k)) continue;      // 嵌套路径：v1 不自动补齐
-      data[k] = v;
-      addedCount++;
+      // path 段数组（missingFromA 提供）：单段 = 顶层键——真实词条表里存在
+      // 键名本身含 "/" 的扁平条目（如 "notes/hint"），原样补在顶层；
+      // 多段 = 嵌套路径（如 ["genInfo","speculativeDecodingTooltip"]），逐层
+      // 深入，缺失的中间层建对象。v1 曾刻意跳过嵌套路径，用户实测反馈
+      // speculative decoding 提示、context checkpoints 子标题正落在这里。
+      if (setPath(data, m.path, zhText.zh)) addedCount++;
     }
     if (addedCount === 0) continue;
     const replacement = encode(JSON.stringify(data), "'");
@@ -131,6 +123,20 @@ export function planA(code, located, decisions) {
     });
   }
   return edits;
+}
+
+// 按段路径写入。中间层缺失则建对象；中间层已存在但不是普通对象（字符串/
+// 数组/null）则放弃该条——不强改既有结构。返回是否写入成功。
+function setPath(obj, path, value) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    const k = path[i];
+    if (cur[k] === undefined) cur[k] = {};
+    if (cur[k] === null || typeof cur[k] !== "object" || Array.isArray(cur[k])) return false;
+    cur = cur[k];
+  }
+  cur[path[path.length - 1]] = value;
+  return true;
 }
 
 // B 层：bundle 内非语言模块的字面量，逐条精确替换

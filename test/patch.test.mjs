@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { encode } from "../src/lex.mjs";
 import { splice, validate, verify, planA, planB, planForDecisions, reverify, apply, restore, provenance, sha256 } from "../src/patch.mjs";
 import { MINI } from "../fixtures/mini-bundle.mjs";
-import { locateLanguageModule } from "../src/extract.mjs";
+import { locateLanguageModule, missingFromA } from "../src/extract.mjs";
 
 // ---- Step 1: splice 与 validate ----
 
@@ -107,6 +107,39 @@ test("planA: adds the missing key into the zh_CN chat namespace", () => {
 test("planA: is a no-op when there is nothing to add", () => {
   const located = locateLanguageModule(MINI);
   assert.equal(planA(MINI, located, []).length, 0);
+});
+
+test("planA: fills nested catalog paths, not just flat keys", () => {
+  // v1 曾刻意跳过嵌套路径；用户实测反馈 speculative decoding 提示、
+  // context checkpoints 子标题正落在嵌套路径里。现在按段深入补写。
+  const src = MINI.replace('{"send":"Send message"',
+    '{"send":"Send message","genInfo":{"tooltip":"Accepted {{a}}/{{b}} draft tokens"}');
+  const located = locateLanguageModule(src);
+  const miss = missingFromA(src, located);
+  assert.ok(miss.some((m) => m.path.length === 2 && m.path[0] === "genInfo"),
+    "应产生两段路径的缺口");
+  const edits = planA(src, located,
+    [{ en: "Accepted {{a}}/{{b}} draft tokens", zh: "已接受 {{a}}/{{b}} 个草稿 token", origin: "curated" }]);
+  assert.equal(edits.length, 1);
+  const out = splice(src, edits);
+  assert.ok(out.includes('"genInfo":{"tooltip":"已接受 {{a}}/{{b}} 个草稿 token"}'));
+  assert.ok(out.includes('"rename":"重命名"'));   // 既有中文未被破坏
+});
+
+test("planA: leaves a non-object intermediate alone", () => {
+  // 中间层已存在但不是对象（zh 侧 genInfo 是字符串）时不强改结构——该条跳过
+  const src = MINI
+    .replace('{"send":"Send message"',
+      '{"send":"Send message","genInfo":{"tooltip":"Accepted {{a}}/{{b}} draft tokens"}')
+    .replace(String.raw`{"send":"\u53d1\u9001\u6d88\u606f"`,
+      String.raw`{"send":"\u53d1\u9001\u6d88\u606f","genInfo":"plain"`);
+  const located = locateLanguageModule(src);
+  const miss = missingFromA(src, located);
+  assert.ok(miss.some((m) => m.path.length === 2 && m.path[0] === "genInfo"),
+    "缺口仍是两段路径");
+  const edits = planA(src, located,
+    [{ en: "Accepted {{a}}/{{b}} draft tokens", zh: "已接受 {{a}}/{{b}} 个草稿 token", origin: "curated" }]);
+  assert.equal(edits.length, 0);   // 中间层是字符串：跳过，不强改
 });
 
 test("planB: replaces an exact dictionary hit outside language modules", () => {
