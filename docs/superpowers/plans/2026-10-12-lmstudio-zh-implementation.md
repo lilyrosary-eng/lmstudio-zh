@@ -397,18 +397,19 @@ Expected: 全部 PASS
 ```javascript
 // 用法: node tools/check-real-bundle.mjs [path-to-main_window.js]
 import { readFileSync } from "node:fs";
-import { scan, decode, encode } from "../src/lex.mjs";
+import { scan, decode } from "../src/lex.mjs";
 
 const file = process.argv[2]
   ?? String.raw`C:\Program Files\LM Studio\resources\app\.webpack\renderer\main_window.js`;
 const code = readFileSync(file, "utf8");
 const lits = scan(code);
 
-let decodeMismatch = 0, spanMismatch = 0, unterminated = 0;
+let decodeMismatch = 0, spanMismatch = 0, unterminated = 0, overlong = 0;
 for (const l of lits) {
   if (decode(l.raw) !== l.value) decodeMismatch++;
   if (code.slice(l.start, l.end) !== l.raw) spanMismatch++;
   if (!/^["'`]/.test(l.raw) || l.raw.at(-1) !== l.raw[0]) unterminated++;
+  if (l.raw.length > 500) overlong++;
 }
 
 console.log(`literals       : ${lits.length}`);
@@ -416,6 +417,7 @@ console.log(`isKey-true     : ${lits.filter((l) => l.isKey).length}`);
 console.log(`decode-mismatch: ${decodeMismatch}`);
 console.log(`span-mismatch  : ${spanMismatch}`);
 console.log(`unterminated   : ${unterminated}`);
+console.log(`overlong(>500) : ${overlong}`);
 
 // span-mismatch 与 unterminated 必须为 0；非 0 说明扫描器有缺陷，停止后续任务。
 if (spanMismatch !== 0 || unterminated !== 0) {
@@ -426,7 +428,12 @@ console.log("OK");
 ```
 
 Run: `node tools/check-real-bundle.mjs`
-Expected: `literals 382068`、`decode-mismatch 0`、`span-mismatch 0`、`unterminated 0`、`OK`
+Expected: `literals 394006`、`isKey-true 8006`、`decode-mismatch 0`、`span-mismatch 0`、
+`unterminated 0`、`overlong(>500)` 为个位数、`OK`
+
+> `overlong(>500)` 统计的是「扫描器把一整段真实代码误当成了一个字面量」的跨度。
+> 当前实测约 54 条、共约 1.3MB。Task 3 的 `isCandidate` 以 `length > 500` 拒绝它们，
+> 因此不会被打补丁；这里是让该损失保持可见，而不是静默。
 
 若 `span-mismatch` 或 `unterminated` 非 0，**停止**并报告，不要继续 Task 2——
 说明扫描器有缺陷，后面所有安全性保证都是空话。
