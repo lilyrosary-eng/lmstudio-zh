@@ -89,6 +89,36 @@ test("isCandidate: accepts natural UI text and whitelisted short words", async (
   assert.equal(isCandidate("Clear", true), false);      // 键不翻
 });
 
+test("isCandidate: rejects concatenation halves and template fragments", async () => {
+  // 实测事故：'Unknown language: "'（拼接半段）被译成中文，报错消息半中半英；
+  // "Cannot `"（模板片段）被译，模板被拼进反引号。奇数引号/反引号 = 不完整文案。
+  const { isCandidate } = await import("../src/extract.mjs");
+  assert.equal(isCandidate('Unknown language: "', false), false);
+  assert.equal(isCandidate("Cannot `", false), false);
+  assert.equal(isCandidate("Expected `bullet` (`", false), false);
+  // 配对出现的引号/反引号是合法 UI 文案
+  assert.equal(isCandidate('Say "hi" now', false), true);
+  assert.equal(isCandidate("Use `npm install`", false), true);
+  // 单引号（英文所有格）不影响——"Don't" 类 UI 词放行
+  assert.equal(isCandidate("Don't ask again", false), true);
+});
+
+test("candidates: lookup-table keys are never candidates", async () => {
+  // 实测事故：["Info","Load"] 是组件注册表 B 的键数组（const B={Info:X,Load:Y}），
+  // 被译后 B["信息"] 落空 → undefined.displayName 崩溃。
+  // 精确签名：既是对象键、又是数组元素/case 标签 = 查找表键，不翻。
+  // 仅作值（label:"Top"）或仅被属性访问的枚举键是安全的，不误杀。
+  const { candidates } = await import("../src/extract.mjs");
+  const code = 'const B={Info:1,Load:2};var t=["Info","Load"];var a="Clear";'
+             + 'var o={"Top":1};var lab="Top";var dir=["Left","Right"];var d2={Left:1,Right:2};';
+  const texts = candidates(code, null).map((c) => c.text);
+  assert.ok(!texts.includes("Info"), "查找表键 Info 不应成为候选");
+  assert.ok(!texts.includes("Load"), "查找表键 Load 不应成为候选");
+  assert.ok(!texts.includes("Left"), "查找表键 Left 不应成为候选");
+  assert.ok(texts.includes("Clear"), "无键用法的 Clear 应保留");
+  assert.ok(texts.includes("Top"), "仅作值/枚举键的 Top 不应被误杀");
+});
+
 test("isCandidate: rejects documentation-length strings (UI-tier cap)", async () => {
   // 用户裁定：按钮/选项/设置等可见控件要翻，文档长句不翻。
   // 25 字符是实测分界线：以上几乎全是库内部消息与文档式描述。

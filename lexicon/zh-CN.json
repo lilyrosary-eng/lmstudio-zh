@@ -54,7 +54,6 @@
     "Anthropic-compatible": { "zh": "兼容 Anthropic", "origin": "curated" },
     "Navigation Bar position": { "zh": "导航栏位置", "origin": "curated" },
     "Top": { "zh": "顶部", "origin": "curated" },
-    "Left": { "zh": "左侧", "origin": "curated" },
     "Model Defaults": { "zh": "模型默认值", "origin": "curated" },
     "Minimum AutoFit context length": { "zh": "AutoFit 最小上下文长度", "origin": "curated" },
     "Require AutoFit to provide at least this many tokens of context. Models that cannot meet this minimum will fail to load.": { "zh": "要求 AutoFit 至少提供这么多 token 的上下文。无法满足该最小值的模型将加载失败。", "origin": "curated" },

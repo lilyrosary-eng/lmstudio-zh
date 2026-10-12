@@ -267,6 +267,16 @@ const isSvgPath = (t) => {
   return t.length >= 6 && /^[Mm]\d/.test(t);
 };
 
+// 奇数个双引号 = 运行时字符串拼接的半段（如 'Unknown language: "'）；
+// 奇数个反引号 = 模板串片段（如 "Cannot `"）。两者都不是完整 UI 文案——
+// 实测译掉它们会把报错消息变成半中半英、把模板拼进反引号。
+// 只数双引号与反引号，不数单引号（英文所有格 "Don't" 是合法 UI 词）。
+const oddCount = (s, ch) => {
+  let n = 0;
+  for (const c of s) if (c === ch) n++;
+  return n % 2 === 1;
+};
+
 export function isCandidate(text, isKey, raw) {
   if (isKey) return false;                       // 只翻值
   if (!text || text.length < 2 || text.length > 500) return false;
@@ -279,6 +289,8 @@ export function isCandidate(text, isKey, raw) {
   if (hasCJK(text)) return false;                // 已翻译
   if (text !== text.trim()) return false;        // 边缘空白：内部字符串特征，UI 标签不会有
   if (isSvgPath(text)) return false;             // SVG 路径数据：翻不得，写回会毁掉图标
+  if (oddCount(text, '"')) return false;         // 拼接半段：译掉会毁掉运行时消息
+  if (oddCount(text, "`")) return false;         // 模板片段：译掉会毁掉模板
   // 白名单必须先于拒绝规则：DENY 里的裸标识符规则会毙掉所有无空格词，
   // 而白名单词（Clear / GPU / OCR…）恰恰全是无空格的。规则与白名单冲突时，
   // 人工白名单是更具体的意图，优先。
@@ -302,6 +314,26 @@ export function isPhantomSpan(raw) {
   return /function|=>|===|var\s|class\s|this\./.test(raw);
 }
 
+// bundle 里被当作对象键使用的标识符集合。两个来源：
+//   ① 非引号键 {Word: / ,Word: —— 注册表/枚举的标准写法，扫描器看不见
+//      （实测 LM Studio 的模型面板注册表就是 const B={Info:X,Load:Y,...}）
+//   ② 引号键 "Word": —— 扫描器的 isKey 已标记，跳过语言模块区间
+// 以及以裸数组元素 / case 标签形式出现的单词集合。
+// 防护规则：单词候选若**既是对象键、又是数组元素或 case 标签**，说明它是喂给
+// 查找表的键（实测 ["Info","Load"] → B[t] → undefined.displayName 崩溃）——
+// 一律不翻。仅作值出现（label:"Top"）或仅被属性访问的枚举键（{Top:"top"}）是
+// 安全的，不误杀。漏翻胜过翻崩。
+function codeUsageSets(code, lits, inExcluded) {
+  const keys = new Set(), arrayWords = new Set(), caseWords = new Set();
+  for (const l of lits) {
+    if (l.isKey && !inExcluded(l.start)) keys.add(l.value);
+  }
+  for (const m of code.matchAll(/[{,;]\s*([A-Za-z_$][\w$]*)\s*:/g)) keys.add(m[1]);
+  for (const m of code.matchAll(/[\[,]\s*(["'`])([A-Za-z_$][\w$]*)\1(?=\s*[,\]])/g)) arrayWords.add(m[2]);
+  for (const m of code.matchAll(/case\s+(["'`])([A-Za-z_$][\w$]*)\1\s*:/g)) caseWords.add(m[2]);
+  return { keys, arrayWords, caseWords };
+}
+
 // B 层候选：bundle 内、不属于任何语言模块区间的自然语言字面量
 export function candidates(code, located) {
   const lits = scan(code);
@@ -320,11 +352,15 @@ export function candidates(code, located) {
     }
     return lo < excluded.length && pos >= excluded[lo].start;
   };
+  const { keys, arrayWords, caseWords } = codeUsageSets(code, lits, inExcluded);
+  const isLookupKey = (w) => keys.has(w) && (arrayWords.has(w) || caseWords.has(w));
   const out = [];
   for (const lit of lits) {
     if (inExcluded(lit.start)) continue;
     if (isPhantomSpan(lit.raw)) continue;          // 幻影跨度：绝不翻译
     if (!isCandidate(lit.value, lit.isKey)) continue;
+    // 注册表键防护：只影响单词候选（键集合里只有标识符形状的串）
+    if (!lit.value.includes(" ") && isLookupKey(lit.value)) continue;
     out.push({ text: lit.value, span: { start: lit.start, end: lit.end },
                quote: lit.quote, hasSubstitution: lit.hasSubstitution, source: "B" });
   }
