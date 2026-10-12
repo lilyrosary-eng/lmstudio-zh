@@ -1,0 +1,11 @@
+["Clear", "Rename", "Save", "Delete", "Cancel", "Close", "Apply", "Reset", "Load",
+ "Unload", "Edit", "Copy", "Paste", "Copy", "Refresh", "Retry", "Continue", "Submit",
+ "Enable", "Disable", "Enabled", "Disabled", "Options", "Advanced", "Details",
+ "Default", "Custom", "Auto", "Beta", "Top", "Left", "Right", "Bottom", "Total",
+ "GPU", "CPU", "RAM", "VRAM", "Off", "On", "Remote", "Local", "Variants",
+ "Capabilities", "Integrations", "Format", "Permissions", "Info", "Help", "New",
+ "Open", "Export", "Import", "Preview", "Download", "Upload", "Start", "Stop",
+ "Pause", "Resume", "Search", "Filter", "Sort", "Select", "Choose", "None", "All",
+ "Yes", "No", "Done", "Error", "Warning", "Install", "Uninstall", "Update", "Move",
+ "Rename", "Duplicate", "Hide", "Show", "More", "Less", "Add", "Remove", "Change",
+ "Unchanged", "Latest", "Alphabetical", "Permissions", "Integrations", "OCR", "MTP"]
