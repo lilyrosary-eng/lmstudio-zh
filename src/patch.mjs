@@ -135,6 +135,7 @@ export function planB(code, located, decisions) {
   for (const c of candidates(code, located)) {
     const d = byEn.get(c.text);
     if (!d) continue;
+    if (d.zh === c.text) continue;               // 恒等映射（LM Studio → LM Studio）：无操作，别进计划
     const v = validate({ en: c.text, zh: d.zh });
     if (!v.ok) continue;
     if (c.hasSubstitution) {

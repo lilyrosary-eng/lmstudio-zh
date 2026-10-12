@@ -2,8 +2,9 @@
 rem lmstudio-zh launcher (Windows). Node probe chain: system node, then LM Studio bundled node.
 rem ASCII-only and CRLF on purpose: cmd.exe reads .cmd in the system ANSI codepage, and its
 rem parser drops leading characters in LF-only files. Keep .gitattributes in sync.
-rem Note: never put a ">" character in a rem line - cmd parses it as redirection even in
-rem comments (it would create a stray file named after the next token).
+rem Note: never put a redirection character in a rem line - cmd parses it as a
+rem redirect even inside comments (it would create a stray file named after the
+rem next token).
 rem Delayed expansion is required: %ERRORLEVEL% inside a parenthesized block is expanded
 rem at PARSE time (i.e. before node runs), so it would always be the exit code of the
 rem previous command. !ERRORLEVEL! is expanded at execution time.

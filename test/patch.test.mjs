@@ -110,6 +110,18 @@ test("planB: ignores non-dictionary strings", () => {
   assert.equal(planB(code, located, []).length, 0);
 });
 
+test("planB: skips identity mappings (LM Studio to LM Studio)", () => {
+  // 词典里的自映射条目（专有名词标记）不应产生编辑——否则预览与 manifest
+  // 里会出现一堆"改不改都一样"的条目
+  const code = MINI + '\nvar a="LM Studio";var b="GPU";';
+  const located = locateLanguageModule(code);
+  const edits = planB(code, located, [
+    { en: "LM Studio", zh: "LM Studio", origin: "curated" },
+    { en: "GPU", zh: "GPU", origin: "curated" },
+  ]);
+  assert.equal(edits.length, 0);
+});
+
 test("planB: rejects a decision whose placeholders do not match", () => {
   const code = MINI + '\nvar label="Moved {{count}} chats";';
   const located = locateLanguageModule(code);
