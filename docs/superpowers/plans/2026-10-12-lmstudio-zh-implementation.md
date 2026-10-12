@@ -459,12 +459,22 @@ git commit -m "feat(lex): zero-dependency JS literal scanner with exact spans"
 - Consumes: 无（叶子模块）
 - Produces:
   - `load(stateDir, toolDir): Lexicon`
+  - `loadLocal(stateDir): Lexicon`
   - `lookup(lex, en): string | undefined`
-  - `upsert(lex, en, zh, origin): void`
-  - `merge(lex): void` — 把 `stateDir/lexicon.local.json` 合并进内存
+  - `upsert(lex, en, zh, origin): void` — origin: "curated" | "model" | "user"
   - `saveLocal(lex, stateDir): void` — 仅把 `origin !== "curated"` 的条目落盘
+  - `stats(lex): { total, curated, model, user }`
 
   其中 `Lexicon = { entries: Map<string, {zh: string, origin: "curated"|"model"|"user"}>, version: number }`
+
+  **两条不可协商的健壮性要求：**
+
+  1. `origin` 必须是 `"curated"` / `"model"` / `"user"` 之一。**未知 origin 一律拒绝写入**——不得让
+     `PRIORITY[unknown]` 得到 `undefined` 并参与比较：`undefined >= 3` 为 false，结果是一个被手工改坏的
+     `lexicon.local.json` 里的 `"origin": "typo"` 反而会覆盖 curated，正好摧毁这套优先级系统存在的唯一
+     理由。`upsert` 同样要拒绝非法 origin。
+  2. 读取 JSON 失败时**不得静默降级**。`zh-CN.json` 损坏必须抛出带文件路径的明确错误（人工词典丢失
+     不能是静默的）；`lexicon.local.json` 损坏才允许降级为空（运行时产物，可重建），但必须可被察觉。
 
 ---
 
@@ -547,7 +557,8 @@ const PRIORITY = { model: 1, user: 2, curated: 3 };
 
 function readJson(path, fallback) {
   if (!existsSync(path)) return fallback;
-  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return fallback; }
+  try { return JSON.parse(readFileSync(path, "utf8")); }
+  catch (e) { throw new Error(`无法解析 ${path}: ${e.message}`); }
 }
 
 export function emptyLexicon() {
@@ -558,6 +569,8 @@ function ingest(lex, data) {
   if (!data || !data.entries) return;
   for (const [en, v] of Object.entries(data.entries)) {
     if (typeof v?.zh !== "string" || !v.zh) continue;
+    // 未知 origin 一律拒绝：PRIORITY[unknown] 是 undefined，参与比较会击穿优先级
+    if (!Object.hasOwn(PRIORITY, v.origin)) continue;
     const prev = lex.entries.get(en);
     if (prev && PRIORITY[prev.origin] >= PRIORITY[v.origin]) continue;
     lex.entries.set(en, { zh: v.zh, origin: v.origin });
@@ -582,6 +595,7 @@ export function lookup(lex, en) {
 }
 
 export function upsert(lex, en, zh, origin) {
+  if (!Object.hasOwn(PRIORITY, origin)) throw new Error(`非法 origin: ${origin}`);
   const prev = lex.entries.get(en);
   if (prev && PRIORITY[prev.origin] >= PRIORITY[origin]) return;
   lex.entries.set(en, { zh, origin });
