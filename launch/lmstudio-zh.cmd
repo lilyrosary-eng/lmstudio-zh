@@ -1,10 +1,12 @@
 @echo off
-rem lmstudio-zh launcher (Windows). Node probe chain: system node -> LM Studio bundled node.
-rem ASCII-only on purpose: cmd.exe reads .cmd in the system ANSI codepage, which is
-rem unknown on the target machine. All user-facing messages live in cli.mjs (UTF-8).
-rem Delayed expansion is required: %ERRORLEVEL% inside a parenthesized block is
-rem expanded at PARSE time (i.e. before node runs) — it would always be the exit
-rem code of `where node`. !ERRORLEVEL! is expanded at execution time.
+rem lmstudio-zh launcher (Windows). Node probe chain: system node, then LM Studio bundled node.
+rem ASCII-only and CRLF on purpose: cmd.exe reads .cmd in the system ANSI codepage, and its
+rem parser drops leading characters in LF-only files. Keep .gitattributes in sync.
+rem Note: never put a ">" character in a rem line - cmd parses it as redirection even in
+rem comments (it would create a stray file named after the next token).
+rem Delayed expansion is required: %ERRORLEVEL% inside a parenthesized block is expanded
+rem at PARSE time (i.e. before node runs), so it would always be the exit code of the
+rem previous command. !ERRORLEVEL! is expanded at execution time.
 setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0.."
 where node >nul 2>nul

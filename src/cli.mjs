@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, openSync, closeSync, unlinkSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -67,6 +67,30 @@ function assertAppClosed(io) {
     execFileSync("pgrep", ["-f", "LM Studio"], { stdio: ["ignore", "ignore", "ignore"] });
     return false;                                  // 退出码 0 = 有匹配
   } catch { return true; }                         // 探测工具缺失/无匹配：放行，由四道闸门兜底
+}
+
+// 写入前置检查。LM Studio 装在 Program Files 时，标准用户对目标目录只读——
+// 设计文档曾假设「全程不需要管理员权限」，那只对 LOCALAPPDATA 式的每用户安装成立。
+// 不预检的话，失败会推迟到写临时文件那一刻，且回滚路径再抛一个 EPERM，
+// 用户看到的是两条互相掩映的权限错误。提前探明并给出可操作提示。
+// 探测方式与 apply 的实际写入一致：在目标目录建临时文件 + 以 r+ 打开目标文件。
+function assertTargetWritable(target, io) {
+  const probe = target + ".lmszh.write-probe";
+  try {
+    const fd = openSync(probe, "w");
+    closeSync(fd);
+    unlinkSync(probe);
+    closeSync(openSync(target, "r+"));
+    return true;
+  } catch (e) {
+    if (e.code === "EACCES" || e.code === "EPERM") {
+      io.err(`目标文件不可写：${target}`);
+      io.err("LM Studio 安装在受保护目录（如 Program Files）下，标准用户无权写入。");
+      io.err("请以管理员身份重新运行本工具（右键启动器 → 以管理员身份运行）。");
+      return false;
+    }
+    return true;                                   // 其他错误交给后续流程报
+  }
 }
 
 // 从官方已有译文采样 few-shot：英文值（en 词条表）→ 中文值（zh 词条表）同键配对，
@@ -178,6 +202,7 @@ export async function main(args, io) {
     case "apply": {
       const found = await locateTarget(io);
       if (!found) { io.err("未找到 LM Studio 安装"); return 1; }
+      if (!assertTargetWritable(found.target, io)) return 1;
       if (!assertAppClosed(io)) { io.err("LM Studio 正在运行，请先完全退出再打补丁"); return 1; }
       const code = readFileSync(found.target, "utf8");
       const p = provenance(code, stateDir);
@@ -232,6 +257,7 @@ export async function main(args, io) {
     case "restore": {
       const found = await locateTarget(io);
       if (!found) { io.err("未找到 LM Studio 安装"); return 1; }
+      if (!assertTargetWritable(found.target, io)) return 1;
       if (!io.argv.includes("--yes")) {
         const ok = await io.confirm("确认还原为原版？");
         if (!ok) { io.log("已取消"); return 0; }

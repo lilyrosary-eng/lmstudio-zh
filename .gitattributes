@@ -1,0 +1,5 @@
+# Windows 批处理文件必须是 CRLF 行尾：cmd.exe 的解析器会吞掉 LF-only 文件的行首字符
+# （实测 "rem" 变 "m" 并被当作命令执行）。shell 脚本保持 LF。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.sh text eol=lf

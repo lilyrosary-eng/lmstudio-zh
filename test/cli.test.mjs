@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { main, decideUntranslated } from "../src/cli.mjs";
@@ -84,6 +84,25 @@ test("apply: translates after the dictionary gains an entry", async () => {
   const after = readFileSync(s.target, "utf8");
   assert.ok(after.includes("继续下载"));
   assert.ok(after.includes("清除"));
+});
+
+test("apply: refuses an unwritable target with a clear message", async () => {
+  // Program Files 式安装的标准用户只读——预检必须给可操作提示，
+  // 而不是让写临时文件那一刻才 EPERM、回滚路径再抛一个 EPERM。
+  const s = scaffold();
+  writeFileSync(join(s.toolDir, "lexicon", "zh-CN.json"), JSON.stringify({ version: 1, entries: {
+    "Resume Download": { zh: "继续下载", origin: "curated" } } }), "utf8");
+  chmodSync(s.target, 0o444);
+  try {
+    const errs = [];
+    const code = await run(s, ["apply", "--yes"], { err: (m) => errs.push(String(m)) });
+    assert.equal(code, 1);
+    assert.ok(errs.join("\n").includes("不可写"));
+    assert.ok(errs.join("\n").includes("管理员"));
+    assert.equal(readFileSync(s.target, "utf8"), s.original);
+  } finally {
+    chmodSync(s.target, 0o644);   // 让临时目录能被清理
+  }
 });
 
 test("apply: refuses while LM Studio is running and leaves the file untouched", async () => {
