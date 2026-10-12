@@ -199,3 +199,44 @@ test("scan: every span slices back to its own raw across a multi-literal sample"
   assert.deepEqual(lits.map((l) => l.value), ["one", "two", "tpl ${x}", "k", "v"]);
   for (const l of lits) assert.equal(code.slice(l.start, l.end), l.raw);
 });
+
+// --- round 3: '/' 分类的根因修正 ---
+
+// 关键字同名的成员属性不是关键字。误判会让 '/' 走正则分支，而正则分支永远不产出字面量，
+// 一路吞到 EOF 也不会有任何告警——后面的字面量全部丢失。
+test("scan: a property named like a keyword is not a regex-preceding keyword", () => {
+  for (const k of ["delete", "in", "of", "case", "void", "return", "throw",
+                   "typeof", "yield", "await", "do", "else"]) {
+    const lits = scan(`var q = o.${k} / 2; var s = "Chat";`);
+    assert.deepEqual(lits.map((l) => l.value), ["Chat"], `o.${k} / 2`);
+  }
+});
+
+// token 不能跨空白累积：for (k in /re/) 里的 in 必须被认成关键字。
+test("scan: a regex after in / of inside a for head is not harvested", () => {
+  assert.deepEqual(
+    scan("for(var k in /[']/g){}var a=\"Chat\";var b=\"after\";").map((l) => l.value),
+    ["Chat", "after"]);
+  assert.deepEqual(
+    scan("for(var k of /[']/g){}var a=\"Chat\";var b=\"after\";").map((l) => l.value),
+    ["Chat", "after"]);
+});
+
+// 无花括号的控制流头：if(x)/re/.test(y) —— 目标符号是 ExpressionStatement，'/' 是正则起始。
+test("scan: a regex after a braceless control-flow head is not harvested", () => {
+  assert.deepEqual(
+    scan('if(x)/[\'"]/.test(y);var a="Chat";var b="it\'s ok";var c="Resume";').map((l) => l.value),
+    ["Chat", "it's ok", "Resume"]);
+  assert.deepEqual(
+    scan('while(n)/[a\']/.test(m);var a="Download";var b="ok";').map((l) => l.value),
+    ["Download", "ok"]);
+  assert.deepEqual(scan('for(;;)/[\'"]/.test(y);var a="Chat";').map((l) => l.value), ["Chat"]);
+  assert.deepEqual(scan('with(o)/[\'"]/.test(y);var a="Chat";').map((l) => l.value), ["Chat"]);
+  assert.deepEqual(scan('{lbl: if(x)/[\'"]/.test(y);var a="Chat";}').map((l) => l.value), ["Chat"]);
+});
+
+test("scan: division after a call is still division", () => {
+  assert.deepEqual(scan('var q = f(x) / 2; var s = "Chat";').map((l) => l.value), ["Chat"]);
+  assert.deepEqual(scan('var q = f(x)(y) / 2; var s = "Chat";').map((l) => l.value), ["Chat"]);
+  assert.deepEqual(scan('if(a){/re/.test(b)}var s = "Chat";').map((l) => l.value), ["Chat"]);
+});

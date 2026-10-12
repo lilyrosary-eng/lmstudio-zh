@@ -19,6 +19,10 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
   "in", "of", "yield", "await", "do", "else",
 ]);
 
+// 这些控制流头之后可能出现无花括号的语句体：if(x)/re/.test(y)。
+// 压缩代码里这种写法非常高频，'/' 在该位置是正则起始而不是除号。
+const CONTROL_HEADS = new Set(["if", "while", "for", "with"]);
+
 const SIMPLE_ESCAPES = {
   n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v", "0": "\0",
   "\\": "\\", '"': '"', "'": "'", "`": "`", "/": "/",
@@ -73,7 +77,12 @@ export function scan(code) {
   const n = code.length;
   const out = [];
   let i = 0;
-  let lastToken = "";   // 最近的有效 token：标识符/数字整体，或单个符号
+  let lastToken = "";            // 上一个有效 token 的完整文本
+  let tokenOpen = false;         // lastToken 是否仍在累积中（没被空白/符号切断）
+  let lastTokenIsMember = false; // 该 token 是否经由 '.' 成员访问得到（o.delete 里的 delete）
+  let pendingMember = false;     // 刚读到 '.'，下一个标识符即成员名
+  let nextTokenIsRegex = false;  // 下一个 '/' 必为正则起始
+  const parenHeads = [];         // 未闭合的 '(' 是否为控制流头
 
   while (i < n) {
     const c = code[i];
@@ -103,6 +112,10 @@ export function scan(code) {
       }
       out.push(mk(code, start, i));
       lastToken = '"';
+      tokenOpen = false;
+      lastTokenIsMember = false;
+      pendingMember = false;
+      nextTokenIsRegex = false;
       continue;
     }
     // 模板串
@@ -135,48 +148,76 @@ export function scan(code) {
         break;
       }
       lastToken = '"';
+      tokenOpen = false;
+      lastTokenIsMember = false;
+      pendingMember = false;
+      nextTokenIsRegex = false;
       continue;
     }
     // 正则字面量
     if (c === "/") {
-      if (!endsExpression(lastToken)) {
-        i++;
-        let inClass = false;
-        while (i < n) {
-          if (code[i] === "\\") { i += 2; continue; }
-          if (code[i] === "[") inClass = true;
-          else if (code[i] === "]") inClass = false;
-          else if (code[i] === "/" && !inClass) { i++; break; }
-          else if (code[i] === "\n") break;
-          i++;
-        }
-        while (i < n && /[gimsuyd]/.test(code[i])) i++;
-        lastToken = "/";
-        continue;
-      }
-      i++;
+      const asRegex = nextTokenIsRegex || !endsExpression(lastToken, lastTokenIsMember);
+      nextTokenIsRegex = false;
+      pendingMember = false;
+      tokenOpen = false;
+      lastTokenIsMember = false;
       lastToken = "/";
+      i++;
+      if (!asRegex) continue;
+      let inClass = false;
+      while (i < n) {
+        if (code[i] === "\\") { i += 2; continue; }
+        if (code[i] === "[") inClass = true;
+        else if (code[i] === "]") inClass = false;
+        else if (code[i] === "/" && !inClass) { i++; break; }
+        else if (code[i] === "\n") break;
+        i++;
+      }
+      while (i < n && /[gimsuyd]/.test(code[i])) i++;
       continue;
     }
-    // 空白
-    if (/\s/.test(c)) { i++; continue; }
-    // 标识符/数字：累积成完整 token，才能识别 return / case 这类关键字
+    // 空白：只前进，不重置 lastToken。关键字与 '/' 之间本来就有空格
+    // （`return /re/`），但 token 自身不能跨空白累积——否则 for (k in /re/)
+    // 里的 in 会并成 "kin"，关键字判断永远不成立。
+    if (/\s/.test(c)) { i++; tokenOpen = false; continue; }
+    // 标识符/数字：累积成完整 token，才能识别 return / case / in / of 这类关键字
     if (/[A-Za-z0-9_$]/.test(c)) {
-      if (!/[A-Za-z0-9_$]/.test(lastToken.at(-1) ?? "")) lastToken = "";
+      if (!tokenOpen) {
+        // 新 token 的首字符：结算上一个 token 留下的修饰
+        lastTokenIsMember = pendingMember;
+        pendingMember = false;
+        nextTokenIsRegex = false;
+        lastToken = "";
+      }
       lastToken += c;
+      tokenOpen = true;
       i++;
       continue;
     }
+    // 符号
+    const prevToken = lastToken;
+    const prevWasMember = lastTokenIsMember;
+    tokenOpen = false;
+    nextTokenIsRegex = false;
+    pendingMember = c === ".";
+    lastTokenIsMember = false;
     lastToken = c;
+    // 无花括号控制流头：if(x)/re/.test(y) —— 这里的 '/' 不是除号，
+    // 因为该位置的目标符号是 ExpressionStatement，'/' 必定是正则起始。
+    // 故在 '(' 处记下它前面是不是 if/while/for/with，闭合它之后强制走正则分支。
+    // 成员调用不算：foo.if(x) 里的 if 只是属性名。
+    if (c === "(") parenHeads.push(!prevWasMember && CONTROL_HEADS.has(prevToken));
+    else if (c === ")") nextTokenIsRegex = parenHeads.pop() ?? false;
     i++;
   }
   return out;
 }
 
 // lastToken 能否结束一个表达式 → '/' 是除号而非正则起始。
-function endsExpression(lastToken) {
+function endsExpression(lastToken, isMember) {
   if (!lastToken) return false;
-  if (REGEX_PRECEDING_KEYWORDS.has(lastToken)) return false;
+  // 关键字只在「作为关键字」时才算；o.delete / 2 的 delete 是属性名。
+  if (!isMember && REGEX_PRECEDING_KEYWORDS.has(lastToken)) return false;
   return EXPRESSION_ENDING.test(lastToken.at(-1));
 }
 
