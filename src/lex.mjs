@@ -33,11 +33,14 @@ export function decode(raw) {
 export function encode(value, quote) {
   const q = quote === '"' || quote === "'" ? quote : "`";
   let out = q;
-  for (const ch of value) {
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
     const cp = ch.codePointAt(0);
     if (ch === "\\") out += "\\\\";
     else if (ch === q) out += "\\" + q;
     else if (ch === "`" && q === "`") out += "\\`";
+    // 反引号串里 '${' 会变成真插值，必须转义，否则会向 bundle 注入未定义变量。
+    else if (q === "`" && ch === "$" && value[i + 1] === "{") out += "\\$";
     else if (ch === "\n") out += "\\n";
     else if (ch === "\r") out += "\\r";
     else if (ch === "\t") out += "\\t";
@@ -79,7 +82,7 @@ export function scan(code) {
         if (code[i] === c) { i++; break; }
         i++;
       }
-      out.push(mk(code, start, i, lastSig));
+      out.push(mk(code, start, i));
       lastSig = '"';
       continue;
     }
@@ -95,7 +98,7 @@ export function scan(code) {
         if (code[i] === "`" && depth === 0) { i++; break; }
         i++;
       }
-      out.push(mk(code, start, i, lastSig));
+      out.push(mk(code, start, i));
       lastSig = '"';
       continue;
     }
@@ -126,13 +129,15 @@ export function scan(code) {
   return out;
 }
 
-function mk(code, start, end, lastSig) {
+function mk(code, start, end) {
   const raw = code.slice(start, end);
   const quote = raw[0];
   const value = decode(raw);
   return {
     start, end, quote, raw, value,
-    isKey: lastSig === ":",
+    // isKey：该字面量充当对象字面量的键——即紧随其后的字符是 ':'（"name": value）。
+    // 注意不是「前面是 ':'」——那样会把普通取值（{height:"px"}）误判成键。
+    isKey: code[end] === ":",
     hasSubstitution: quote === "`" && raw.includes("${"),
   };
 }

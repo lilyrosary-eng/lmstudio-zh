@@ -38,9 +38,32 @@ test("scan: single-quoted literal keeps its quote type", () => {
   assert.equal(lits[0].value, "hi");
 });
 
-test("scan: object key is flagged via preceding colon", () => {
-  const lits = scan(`({chat:"Chat"})`);
+test("scan: a quoted object key is flagged as isKey", () => {
+  const lits = scan(`var o={"height":1};`);
+  assert.equal(lits.length, 1);
+  assert.equal(lits[0].value, "height");
   assert.equal(lits[0].isKey, true);
+});
+
+test("scan: an object value is not flagged as isKey", () => {
+  const lits = scan(`var o={height:"px"};`);
+  assert.equal(lits.length, 1);
+  assert.equal(lits[0].value, "px");
+  assert.equal(lits[0].isKey, false);
+});
+
+test("scan: a bare-identifier key leaves its value unflagged", () => {
+  const lits = scan(`({chat:"Chat"})`);
+  assert.equal(lits.length, 1);
+  assert.equal(lits[0].value, "Chat");
+  assert.equal(lits[0].isKey, false);
+});
+
+test("scan: a standalone literal is not flagged as isKey", () => {
+  const lits = scan(`var s="Resume Download";`);
+  assert.equal(lits.length, 1);
+  assert.equal(lits[0].value, "Resume Download");
+  assert.equal(lits[0].isKey, false);
 });
 
 test("scan: template with substitution sets hasSubstitution", () => {
@@ -84,4 +107,23 @@ test("encode: escapes the matching quote only", () => {
 
 test("encode: preserves CJK verbatim", () => {
   assert.equal(encode("推理预算", '"'), '"推理预算"');
+});
+
+test("encode: escapes ${ inside a backtick literal", () => {
+  const v = "cost ${price} USD";
+  assert.equal(decode(encode(v, "`")), v);
+  assert.equal(encode(v, "`"), "`cost \\${price} USD`");
+});
+
+test("encode: ${ is inert and left unescaped in quotes", () => {
+  const v = "cost ${price} USD";
+  assert.equal(encode(v, '"'), '"cost ${price} USD"');
+  assert.equal(encode(v, "'"), "'cost ${price} USD'");
+});
+
+test("encode: backtick output never contains an unescaped ${", () => {
+  for (const v of ["cost ${price} USD", "${", "a${b}c${d}e", "$${x}", "\\${y}"]) {
+    assert.doesNotMatch(encode(v, "`"), /(?<!\\)\$\{/, `unescaped \${ in ${JSON.stringify(v)}`);
+    assert.equal(decode(encode(v, "`")), v);
+  }
 });
