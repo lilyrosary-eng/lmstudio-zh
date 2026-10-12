@@ -84,8 +84,21 @@ test("isCandidate: accepts natural UI text and whitelisted short words", async (
   const { isCandidate } = await import("../src/extract.mjs");
   assert.equal(isCandidate("Resume Download", false), true);
   assert.equal(isCandidate("Export as PDF (.pdf)", false), true);
+  assert.equal(isCandidate("Open in New Window", false), true);   // 18 字符，设计文档点名的 UI 串
   assert.equal(isCandidate("Clear", false), true);
   assert.equal(isCandidate("Clear", true), false);      // 键不翻
+});
+
+test("isCandidate: rejects documentation-length strings (UI-tier cap)", async () => {
+  // 用户裁定：按钮/选项/设置等可见控件要翻，文档长句不翻。
+  // 25 字符是实测分界线：以上几乎全是库内部消息与文档式描述。
+  const { isCandidate } = await import("../src/extract.mjs");
+  assert.equal(isCandidate("Maximum Concurrent Predictions", false), false);            // 30
+  assert.equal(isCandidate("Cannot access window outside of the DOM", false), false);   // 40
+  assert.equal(isCandidate("This value does not match the required pattern", false), false); // 50
+  // 边界：25 字符放行，26 字符拒绝
+  assert.equal(isCandidate("Select all of these items", false), true);       // 25
+  assert.equal(isCandidate("Select all of these items now", false), false);  // 30
 });
 
 test("isCandidate: rejects already-translated text", async () => {
@@ -97,7 +110,8 @@ test("isCandidate: rejects SVG path data and edge-whitespace strings", async () 
   const { isCandidate } = await import("../src/extract.mjs");
   // 真实 bundle 中出现 7640 次的图标路径：含空格与大写字母，但它是数据不是文案
   for (const path of ["M0 0h24v24H0z", "M3 3l18 18",
-                     "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"]) {
+                     "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0",
+                     "M7 10l6 0", "M10 7l0 6", "M3 4v4h4"]) {   // 最后三条是短 subpath 片段
     assert.equal(isCandidate(path, false), false, `should reject ${path}`);
   }
   assert.equal(isCandidate(" useId ", false), false);        // 边缘空白：内部串特征

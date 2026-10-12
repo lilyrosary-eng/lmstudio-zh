@@ -41,6 +41,19 @@ test("validate: rejects out-of-range length", () => {
   assert.equal(validate({ en: "a".repeat(400), zh: "短", origin: "model" }).ok, false);
 });
 
+test("validate: accepts compact Chinese translations of short English labels", () => {
+  // EN→ZH 场景：中文天然紧凑。原固定 0.2× 下限实测误杀两批——
+  // Integrations(12)→集成(2) 一批误杀 35 条；Yes(3)→是(1)/No(3)→否(1)/
+  // New(3)→新(1) 这类单字合法译文整类被拒。下限改为随源长度缩放。
+  assert.equal(validate({ en: "Integrations", zh: "集成", origin: "model" }).ok, true);
+  assert.equal(validate({ en: "Yes", zh: "是", origin: "model" }).ok, true);
+  assert.equal(validate({ en: "No", zh: "否", origin: "model" }).ok, true);
+  assert.equal(validate({ en: "New", zh: "新", origin: "model" }).ok, true);
+  // 长文截断仍然拒绝：10 字符以上要求 ≥10% 长度
+  assert.equal(validate({ en: "a".repeat(40), zh: "短", origin: "model" }).ok, false);
+  assert.equal(validate({ en: "a".repeat(100), zh: "一二三", origin: "model" }).ok, false);
+});
+
 test("validate: rejects empty or already-CJK target", () => {
   assert.equal(validate({ en: "Clear", zh: "", origin: "model" }).ok, false);
   assert.equal(validate({ en: "Clear", zh: "清除", origin: "curated" }).ok, true);

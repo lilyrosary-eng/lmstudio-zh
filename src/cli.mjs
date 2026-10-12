@@ -85,8 +85,10 @@ function assertTargetWritable(target, io) {
   } catch (e) {
     if (e.code === "EACCES" || e.code === "EPERM") {
       io.err(`目标文件不可写：${target}`);
-      io.err("LM Studio 安装在受保护目录（如 Program Files）下，标准用户无权写入。");
-      io.err("请以管理员身份重新运行本工具（右键启动器 → 以管理员身份运行）。");
+      io.err("LM Studio 安装在受保护目录（如 Program Files 或 /opt）下，标准用户无权写入。");
+      io.err(process.platform === "win32"
+        ? "请以管理员身份重新运行本工具（右键启动器 → 以管理员身份运行）。"
+        : "请使用 sudo 重新运行本工具（如 sudo ./launch/lmstudio-zh.sh apply）。");
       return false;
     }
     return true;                                   // 其他错误交给后续流程报

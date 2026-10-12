@@ -5,15 +5,21 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { main } from "../src/cli.mjs";
+import { main, defaultStateDir } from "../src/cli.mjs";
 import { load } from "../src/lexicon.mjs";
 import { locateLanguageModule, zhCatalog, missingFromA } from "../src/extract.mjs";
-import { RELATIVE_TARGET } from "../src/discover.mjs";
+import { find, RELATIVE_TARGET } from "../src/discover.mjs";
+import { provenance } from "../src/patch.mjs";
 
-const REAL = String.raw`C:\Program Files\LM Studio\resources\app\.webpack\renderer\main_window.js`;
+// 目标文件由 discover 动态定位（跨平台）；LMS_PATH 可覆盖。
+// brief 原稿硬编码 Windows 路径——在 Linux 上这个 e2e 永远跑不了。
+const REAL = process.env.LMS_PATH || find()?.target || "";
+const enabled = process.env.LMS_E2E === "1" && REAL !== "";
+const opts = { skip: enabled ? false : "需要 LMS_E2E=1 且 discover 能定位到 LM Studio（可用 LMS_PATH 覆盖）" };
 const TOOL_DIR = join(fileURLToPath(import.meta.url), "..", "..");
-const enabled = process.env.LMS_E2E === "1";
-const opts = { skip: enabled ? false : "需要 LMS_E2E=1 且本机已安装 LM Studio" };
+// 真实安装可能已被本工具打过补丁（本机就是）。两种状态下验收断言不同：
+// 原版 → apply 必须改动文件；已补丁 → apply 必须幂等无操作。
+const livePatched = REAL !== "" && provenance(readFileSync(REAL, "utf8"), defaultStateDir()).state === "patched";
 
 // 全部在临时目录的副本上运行，绝不触碰真实安装文件。
 // 副本按真实安装布局摆放（<root>/resources/app/.webpack/renderer/…）——
@@ -62,7 +68,12 @@ test("real bundle: applying keeps the file syntactically valid", opts, async () 
   const rc = await main(["apply", "--yes", "--force"], io(d, copy));
   assert.equal(rc, 0);
   const patched = readFileSync(copy, "utf8");
-  assert.notEqual(patched, original, "文件应被修改");
+  if (livePatched) {
+    // 真实安装已是本工具的补丁产物（本机即是）：apply 应幂等，不再改动
+    assert.equal(patched, original, "已补丁的真实安装：apply 应为无操作");
+  } else {
+    assert.notEqual(patched, original, "文件应被修改");
+  }
   new vm.Script(patched, { filename: "e2e.js" });          // 闸门 1
 });
 
@@ -83,5 +94,8 @@ test("real bundle: second apply is a no-op (idempotent)", opts, async () => {
   const rc = await main(["apply", "--yes", "--force"], { ...base, log: (m) => logs.push(String(m)) });
   assert.equal(rc, 0);
   assert.equal(readFileSync(copy, "utf8"), after, "第二次 apply 不应改动文件");
-  assert.ok(logs.some((l) => l.includes("已是最新补丁")), "应报告已是最新补丁");
+  // 已补丁的真实安装：第一次 apply 就是无操作（0 编辑时 CLI 不写 manifest），
+  // 第二次同样报告无可应用改动——两种措辞都等价于幂等。
+  assert.ok(logs.some((l) => l.includes("已是最新补丁") || l.includes("没有可应用的改动")),
+    "应报告已是最新补丁或无可应用改动");
 });

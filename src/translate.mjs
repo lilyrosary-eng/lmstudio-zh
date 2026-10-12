@@ -52,6 +52,19 @@ export function buildPrompt(items, fewShot = []) {
 
 const ph = (s) => (String(s).match(/\{\{[^}]*\}\}/g) ?? []).sort().join(" ");
 
+// 整数组 JSON 坏掉时逐条抢救：匹配形状基本完整的 {"en": "...", ...zh...: "..."} 对象。
+// 实测模型的损坏形态是 ',zh":'（zh 的引号位置错）——键匹配必须宽容
+// （"? 与 :? 均可省略），否则救不回任何一条。字符串值本身仍用严格的
+// JSON 字符串语法 (?:[^"\\]|\\.)*，保证不会跨条目错配。
+const ENTRY_RE = /\{\s*"en"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*"?\s*zh\s*"?\s*:?\s*("(?:[^"\\]|\\.)*")\s*\}/g;
+function salvageEntries(text) {
+  const out = [];
+  for (const m of text.matchAll(ENTRY_RE)) {
+    try { out.push({ en: JSON.parse(m[1]), zh: JSON.parse(m[2]) }); } catch { /* 单条也坏：跳过 */ }
+  }
+  return out;
+}
+
 export function parseReply(raw, items) {
   const filled = [], rejected = [];
   const known = new Map(items.map((i) => [textOf(i), i]));
@@ -60,7 +73,11 @@ export function parseReply(raw, items) {
   if (start < 0 || end <= start) return { filled, rejected: items.map((i) => ({ en: textOf(i), reason: "unparsable" })) };
   let arr;
   try { arr = JSON.parse(raw.slice(start, end + 1)); }
-  catch { return { filled, rejected: items.map((i) => ({ en: textOf(i), reason: "unparsable" })) }; }
+  catch {
+    // 整数组解析失败（实测模型偶发漏一个引号：',zh":'）——逐条抢救，
+    // 不让一个坏条目废掉整批（否则残留条目会在续跑里反复失败）。
+    arr = salvageEntries(raw.slice(start, end + 1));
+  }
   if (!Array.isArray(arr)) return { filled, rejected: items.map((i) => ({ en: textOf(i), reason: "unparsable" })) };
 
   const seen = new Set();

@@ -57,6 +57,17 @@ test("parseReply: reports items the model did not return", () => {
   assert.equal(r.rejected[0].en, "Rename");
 });
 
+test("parseReply: salvages good entries from a partially malformed array", () => {
+  // 实测模型偶发漏一个引号（',zh":'）——整数组 JSON 坏掉，但形状完整的条目
+  // 必须被抢救回来，否则一个坏字符废掉整批 40 条
+  const raw = '[{"en":"Clear","zh":"清除"},{"en":"Rename",zh":"重命名"},{"en":"Save","zh":"保存"}]';
+  const r = parseReply(raw, [
+    { en: "Clear", text: "Clear" }, { en: "Rename", text: "Rename" }, { en: "Save", text: "Save" },
+  ]);
+  assert.deepEqual(r.filled.map((f) => f.en).sort(), ["Clear", "Rename", "Save"]);
+  assert.equal(r.rejected.length, 0);
+});
+
 test("parseReply: dedupes repeated entries, first one wins", () => {
   const raw = '[{"en":"Clear","zh":"清除"},{"en":"Clear","zh":"清空"}]';
   const r = parseReply(raw, [{ en: "Clear", text: "Clear" }]);

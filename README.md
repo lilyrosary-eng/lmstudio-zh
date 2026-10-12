@@ -40,6 +40,20 @@ chmod +x launch/lmstudio-zh.sh
 （Windows: `~/.lmstudio/.internal/utils/node.exe`；Linux: `.deb` 安装与 AppImage 解包目录内）。
 都找不到时报错并给出安装指引。
 
+### Linux 支持现状（诚实说明）
+
+| 项目 | 状态 |
+|---|---|
+| 安装发现 | 代码覆盖 `.deb`（`/opt`、`/usr/lib`、`/usr/share`、snap、flatpak、AppImage 解包目录、`~/.local/share`），flatpak 分支用注入 fs 单测覆盖；**未在真实 Linux 机器上实测过路径命中** |
+| 补丁核心 | 平台无关（纯 fs 操作 + POSIX 路径拼接），Windows 上对 34.5MB 真实 bundle 完整验证 |
+| 启动器 `.sh` | 已逐行复查（POSIX、`exec` 直传退出码、可执行位已入 git）；**未实机运行** |
+| 进程检测 | Windows 用 `tasklist`；Linux 用 `pgrep -f`（退出码语义）——后者未实机验证 |
+| 权限 | 装在 `/opt` 等受保护目录需要 `sudo`；工具会预检并提示（与 Windows 的 Program Files 同机制） |
+| AppImage | 定位解包目录可行；**重新封包（unsquashfs → mksquashfs）未实现**，属设计文档 §13 的待定项 |
+
+首次在 Ubuntu 上使用时，建议先 `./launch/lmstudio-zh.sh doctor` 确认安装被发现、
+版本正确，再继续 `scan` / `apply`。
+
 ### 常用参数
 
 | 参数 | 说明 |

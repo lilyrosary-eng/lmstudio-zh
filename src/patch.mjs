@@ -28,7 +28,12 @@ export function validate(edit) {
   const { en, zh } = edit;
   if (typeof zh !== "string" || !zh.trim()) return { ok: false, reason: "empty target" };
   if (placeholders(en) !== placeholders(zh)) return { ok: false, reason: "placeholder mismatch" };
-  if (en.length * 0.2 > zh.length) return { ok: false, reason: "target too short" };
+  // 下限随源长度缩放：max(1, ⌈en/10⌉)。原为固定 0.2×，那是按英文自相等式设的——
+  // EN→ZH 场景下中文天然紧凑，实测误杀两批：Integrations(12)→集成(2) 一批误杀 35 条，
+  // Yes(3)→是(1)/No(3)→否(1)/New(3)→新(1) 这类单字合法译文整类被拒。
+  // 缩放后：短词允许单字，10 字符以上要求 ≥10% 长度，40 字符英文至少 4 字符中文，
+  // 长文截断仍被挡。85 条人工词典在两种口径下全部通过。
+  if (zh.length < Math.max(1, Math.ceil(en.length / 10))) return { ok: false, reason: "target too short" };
   if (zh.length > en.length * 5) return { ok: false, reason: "target too long" };
   return { ok: true };
 }

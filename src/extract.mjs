@@ -256,14 +256,26 @@ const hasCJK = (s) => /[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/.test(s);
 // 它们含空格与大写字母，能骗过下面的自然语言规则——实测占 B 层候选唯一值的
 // 75%（25694/34027，出现次数最高的一条 7640 次）。这类数据一旦被翻译写回，
 // 界面图标会全部损坏，且四道闸门拦不住它（译文是合法字符串、占位符也一致）。
-// 判据：以路径命令字母开头、整体仅由路径命令字符与数字/分隔符构成、长度 ≥ 10 且含数字。
-// 边界经过实测：85 条词典键与短词白名单零误伤，设计文档点名的 UI 串全部存活。
+// 判据：以路径命令字母开头、整体仅由路径命令字符与数字/分隔符构成。
+// 长跨度（≥10 且含数字）直接判；短片段（图标库的 subpath，如 "M7 10l6 0"）
+// 以 M+绝对坐标开头且 ≥6 字符也判——它们长度不足 10 会漏网，
+// 而一旦被译成中文，对应图标会被替换成文字。
 const SVG_PATH = /^[MmLlHhVvCcSsQqTtAaZz][MmLlHhVvCcSsQqTtAaZz0-9\s.,+-]*$/;
-const isSvgPath = (t) => t.length >= 10 && /\d/.test(t) && SVG_PATH.test(t);
+const isSvgPath = (t) => {
+  if (!SVG_PATH.test(t)) return false;
+  if (t.length >= 10 && /\d/.test(t)) return true;
+  return t.length >= 6 && /^[Mm]\d/.test(t);
+};
 
 export function isCandidate(text, isKey, raw) {
   if (isKey) return false;                       // 只翻值
   if (!text || text.length < 2 || text.length > 500) return false;
+  // UI 层上限 25 字符：实测 B 层候选唯一值按长度分布，≤25 是按钮/选项/设置标签
+  // （设计文档 §2.2 点名的样例全部 ≤21 字符），26 以上几乎全是库内部消息
+  // （asn1/router/React 校验）与文档式长句——用户裁定可见控件要翻、文档不翻。
+  // >25 字符的 curated 条目全部走 A 层路径（实测 B 层候选零依赖），
+  // 加上限不破坏任何现有译文。
+  if (text.length > 25) return false;
   if (hasCJK(text)) return false;                // 已翻译
   if (text !== text.trim()) return false;        // 边缘空白：内部字符串特征，UI 标签不会有
   if (isSvgPath(text)) return false;             // SVG 路径数据：翻不得，写回会毁掉图标
