@@ -78,7 +78,7 @@ C:\Users\Rosary\lmstudio-zh\
 **Files:**
 - Create: `src/lex.mjs`
 - Create: `test/lex.test.mjs`
-- Create: `fixtures/mini-bundle.mjs`
+- Create: `tools/check-real-bundle.mjs`
 - Create: `package.json`
 
 **Interfaces:**
@@ -388,23 +388,54 @@ test("encode: preserves CJK verbatim", () => {
 Run: `node --test test/lex.test.mjs`
 Expected: 全部 PASS
 
-- [ ] **Step 9: 对真实 bundle 做一次精度校验（不作为单元测试）**
+- [ ] **Step 9: 对真实 bundle 做一次精度校验（提交校验脚本，不作为单元测试）**
 
-写临时脚本，对真实 `main_window.js` 校验：扫描出的字面量中，随机取 200 条用 `decode` 后再 `encode` 应当与 `raw` 逐字节相等。
+把校验脚本提交进仓库，使 `span-mismatch` 这个真实回归信号可复现（不要只用临时脚本）：
 
-Run:
-```bash
-node -e "import('./src/lex.mjs').then(async m=>{const fs=await import('node:fs');const c=fs.readFileSync(String.raw\`C:\Program Files\LM Studio\resources\app\.webpack\renderer\main_window.js\`,'utf8');const L=m.scan(c);let bad=0;for(const l of L){if(m.decode(l.raw)!==l.value)bad++;}console.log('literals',L.length,'decode-mismatch',bad);})"
+`tools/check-real-bundle.mjs`：
+
+```javascript
+// 用法: node tools/check-real-bundle.mjs [path-to-main_window.js]
+import { readFileSync } from "node:fs";
+import { scan, decode, encode } from "../src/lex.mjs";
+
+const file = process.argv[2]
+  ?? String.raw`C:\Program Files\LM Studio\resources\app\.webpack\renderer\main_window.js`;
+const code = readFileSync(file, "utf8");
+const lits = scan(code);
+
+let decodeMismatch = 0, spanMismatch = 0, unterminated = 0;
+for (const l of lits) {
+  if (decode(l.raw) !== l.value) decodeMismatch++;
+  if (code.slice(l.start, l.end) !== l.raw) spanMismatch++;
+  if (!/^["'`]/.test(l.raw) || l.raw.at(-1) !== l.raw[0]) unterminated++;
+}
+
+console.log(`literals       : ${lits.length}`);
+console.log(`isKey-true     : ${lits.filter((l) => l.isKey).length}`);
+console.log(`decode-mismatch: ${decodeMismatch}`);
+console.log(`span-mismatch  : ${spanMismatch}`);
+console.log(`unterminated   : ${unterminated}`);
+
+// span-mismatch 与 unterminated 必须为 0；非 0 说明扫描器有缺陷，停止后续任务。
+if (spanMismatch !== 0 || unterminated !== 0) {
+  console.error("FAIL — 扫描器存在缺陷，停止。");
+  process.exit(1);
+}
+console.log("OK");
 ```
-Expected: 输出类似 `literals 382068 decode-mismatch 0`
 
-若 `decode-mismatch` 非 0，**停止**并报告，不要继续 Task 2——说明扫描器有缺陷。
+Run: `node tools/check-real-bundle.mjs`
+Expected: `literals 382068`、`decode-mismatch 0`、`span-mismatch 0`、`unterminated 0`、`OK`
+
+若 `span-mismatch` 或 `unterminated` 非 0，**停止**并报告，不要继续 Task 2——
+说明扫描器有缺陷，后面所有安全性保证都是空话。
 
 - [ ] **Step 10: Commit**
 
 ```bash
 git init
-git add package.json src/lex.mjs test/lex.test.mjs
+git add package.json src/lex.mjs test/lex.test.mjs tools/check-real-bundle.mjs
 git commit -m "feat(lex): zero-dependency JS literal scanner with exact spans"
 ```
 
@@ -709,6 +740,7 @@ git commit -m "feat(lexicon): bilingual dictionary with source-priority merge"
 **Files:**
 - Create: `src/extract.mjs`
 - Create: `test/extract.test.mjs`
+- Create: `fixtures/mini-bundle.mjs`
 - Create: `lexicon/short-words.json`
 
 **Interfaces:**
