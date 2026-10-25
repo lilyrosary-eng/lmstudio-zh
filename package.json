@@ -1,7 +1,7 @@
 {
   "name": "lmstudio-zh",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": { "lmstudio-zh": "./bin/lmstudio-zh.mjs" },
   "dependencies": {},
